@@ -208,3 +208,10 @@ target_wrapper.*
 # QtCtreator CMake
 CMakeLists.txt.user*
 
+
+##################
+# Custom ignores #
+##################
+
+# Auto-generated files
+resources.py
