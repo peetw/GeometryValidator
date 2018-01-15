@@ -20,14 +20,18 @@
  *                                                                         *
  ***************************************************************************/
 """
-from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication
-from PyQt4.QtGui import QAction, QIcon
+from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QVariant
+from PyQt4.QtGui import QAction, QIcon, QMessageBox
 # Initialize Qt resources from file resources.py
 import resources
 # Import the code for the dialog
 from geometry_validator_dialog import GeometryValidatorDialog
 import os.path
-
+# Custom imports
+from qgis.core import QgsMapLayerRegistry, QgsPoint, QgsGeometry, QgsFeature, QgsFields, QgsField, QgsVectorLayer
+from qgis.gui import QgsMapLayerProxyModel
+from shapely import validation, wkt
+import re
 
 class GeometryValidator:
     """QGIS Plugin Implementation."""
@@ -168,6 +172,8 @@ class GeometryValidator:
             callback=self.run,
             parent=self.iface.mainWindow())
 
+        # Populate input layer combo box
+        self.dlg.comboBoxInputLayer.setFilters(QgsMapLayerProxyModel.HasGeometry)
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
@@ -182,12 +188,67 @@ class GeometryValidator:
 
     def run(self):
         """Run method that performs all the real work"""
-        # show the dialog
+        # Show the dialog
         self.dlg.show()
         # Run the dialog event loop
         result = self.dlg.exec_()
         # See if OK was pressed
         if result:
-            # Do something useful here - delete the line containing pass and
-            # substitute with your code.
-            pass
+            # Get selected layer and process if provided
+            layer = self.dlg.comboBoxInputLayer.currentLayer()
+            if layer:
+                self.process(layer)
+
+    def process(self, layer):
+        # Initialize output vector layer for invalid point locations
+        # NOTE: Must set CRS in vector layer path URI, rather than using setCrs() method;
+        #       see: https://gis.stackexchange.com/a/77500
+        layerCrsWkt = layer.crs().toWkt()
+        errorLayerName = 'validation_errors'
+        errorLayer = QgsVectorLayer("Point?crs=%s" % layerCrsWkt, errorLayerName, 'memory')
+
+        # Add attribute fields to output layer
+        dataProvider = errorLayer.dataProvider()
+        dataProvider.addAttributes([QgsField('Reason', QVariant.String)])
+        errorLayer.updateFields()
+
+        # Iterate over each feature in the input layer
+        numErrors = 0
+        for feature in layer.getFeatures():
+            # Get geometry from current feature and check whether it is valid
+            geom = feature.geometry()
+            if not geom.isEmpty() and not geom.isGeosValid():
+                # Use shapely to get validation error reason
+                # NOTE: Cannot use the geom.validateGeometry() method here as it does not seem to work correctly
+                # NOTE: Shapely method uses the GEOSisValidReason_r method internally, see:
+                #       https://trac.osgeo.org/geos/browser/trunk/capi/geos_ts_c.cpp#L954
+                geomWkt = geom.exportToWkt()
+                shape = wkt.loads(geomWkt)
+                validationStr = validation.explain_validity(shape)
+
+                # Parse validation error reason to get location co-ordinates
+                matches = re.search('\[([\w\d.\-+]+)\s+([\w\d.\-+]+)\]', validationStr)
+                coordX = matches.group(1)
+                coordY = matches.group(2)
+
+                # Convert co-ordinates to point geometry
+                errorPoint = QgsPoint(float(coordX), float(coordY))
+                errorGeom = QgsGeometry.fromPoint(errorPoint)
+
+                # Create new feature from point geometry and attribute with validation error reason
+                errorFeat = QgsFeature()
+                errorFeat.setGeometry(errorGeom)
+                errorFeat.setAttributes([validationStr])
+                dataProvider.addFeatures([errorFeat])
+
+                # Update error count
+                numErrors += 1
+
+        # Add output layer to map canvas if errors detected and display message box
+        if numErrors > 0:
+            errorLayer.updateExtents()
+            QgsMapLayerRegistry.instance().addMapLayer(errorLayer)
+            errorMsg = "Detected %g invalid geometries!\n\nPlease see the '%s' layer for details." % (numErrors, errorLayerName)
+            QMessageBox.warning(self.dlg, 'Geometry Validator', errorMsg, QMessageBox.Ok)
+        else:
+            QMessageBox.information(self.dlg, 'Geometry Validator', "No invalid geometries detected :)", QMessageBox.Ok)
