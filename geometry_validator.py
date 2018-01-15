@@ -164,7 +164,6 @@ class GeometryValidator:
 
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
-
         icon_path = ':/plugins/GeometryValidator/icon.png'
         self.add_action(
             icon_path,
@@ -172,8 +171,6 @@ class GeometryValidator:
             callback=self.run,
             parent=self.iface.mainWindow())
 
-        # Populate input layer combo box
-        self.dlg.comboBoxInputLayer.setFilters(QgsMapLayerProxyModel.HasGeometry)
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
@@ -188,10 +185,16 @@ class GeometryValidator:
 
     def run(self):
         """Run method that performs all the real work"""
+
+        # Filter input layer combo box to only show vector layers
+        self.dlg.comboBoxInputLayer.setFilters(QgsMapLayerProxyModel.HasGeometry)
+
         # Show the dialog
         self.dlg.show()
+
         # Run the dialog event loop
         result = self.dlg.exec_()
+
         # See if OK was pressed
         if result:
             # Get selected layer and process if provided
