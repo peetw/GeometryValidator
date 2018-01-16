@@ -28,11 +28,12 @@ import resources
 from geometry_validator_dialog import GeometryValidatorDialog
 import os.path
 # Custom imports
-from qgis.core import QgsMapLayerRegistry, QgsPoint, QgsGeometry, QgsFeature, QgsFields, QgsField, QgsVectorLayer
+from qgis.core import QgsMapLayerRegistry, QgsPoint, QgsGeometry, QgsFeature, QgsField, QgsVectorLayer
 from qgis.gui import QgsMapLayerProxyModel
 from shapely import validation, wkt
 import re
 import traceback
+
 
 class GeometryValidator:
     """QGIS Plugin Implementation."""
@@ -63,7 +64,6 @@ class GeometryValidator:
             if qVersion() > '4.3.3':
                 QCoreApplication.installTranslator(self.translator)
 
-
         # Declare instance attributes
         self.actions = []
         self.menu = self.tr(u'&Geometry Validator')
@@ -86,18 +86,17 @@ class GeometryValidator:
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
         return QCoreApplication.translate('GeometryValidator', message)
 
-
     def add_action(
-        self,
-        icon_path,
-        text,
-        callback,
-        enabled_flag=True,
-        add_to_menu=True,
-        add_to_toolbar=True,
-        status_tip=None,
-        whats_this=None,
-        parent=None):
+            self,
+            icon_path,
+            text,
+            callback,
+            enabled_flag=True,
+            add_to_menu=True,
+            add_to_toolbar=True,
+            status_tip=None,
+            whats_this=None,
+            parent=None):
         """Add a toolbar icon to the toolbar.
 
         :param icon_path: Path to the icon for this action. Can be a resource
@@ -175,7 +174,6 @@ class GeometryValidator:
         # Connect run button to process method
         self.dlg.runButton.clicked.connect(self.process)
 
-
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
@@ -185,7 +183,6 @@ class GeometryValidator:
             self.iface.removeToolBarIcon(action)
         # remove the toolbar
         del self.toolbar
-
 
     def run(self):
         """Run method that performs all the real work"""
@@ -199,13 +196,11 @@ class GeometryValidator:
         # Show the dialog
         self.dlg.show()
 
-
     def process(self):
         # Get selected layer and process if provided
         layer = self.dlg.comboBoxInputLayer.currentLayer()
         if layer:
             self.startWorker(layer)
-
 
     def startWorker(self, layer):
         # Initialize worker with selected layer
@@ -234,7 +229,6 @@ class GeometryValidator:
         self.thread = thread
         self.worker = worker
 
-
     def workerFinished(self, ret):
         # Clean up the worker and thread
         self.worker.deleteLater()
@@ -258,7 +252,6 @@ class GeometryValidator:
         # Re-enable run button
         self.dlg.runButton.setEnabled(True)
 
-
     def workerError(self, ex, exception_string):
         # Display error message box
         QMessageBox.critical(self.dlg, 'Geometry Validator', exception_string, QMessageBox.Ok)
@@ -267,6 +260,7 @@ class GeometryValidator:
 class Worker(QObject):
     """Worker to run long-running process in separate thread; taken from:
     https://snorfalorpagus.net/blog/2013/12/07/multithreading-in-qgis-python-plugins"""
+
     def __init__(self, layer):
         QObject.__init__(self)
         self.layer = layer
