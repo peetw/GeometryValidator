@@ -9,7 +9,7 @@
 [general]
 name=Geometry Validator
 qgisMinimumVersion=2.0
-description=This plugin checks whether the geometries in a layer are valid
+description=Check whether geometries are OGC valid
 version=0.1
 author=Jeremy Benn Associates Ltd.
 email=peet.whittaker@jbaconsulting.com
