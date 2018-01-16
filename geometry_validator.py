@@ -67,9 +67,6 @@ class GeometryValidator:
         # Declare instance attributes
         self.actions = []
         self.menu = self.tr(u'&Geometry Validator')
-        # TODO: We are going to let the user set this up in a future iteration
-        self.toolbar = self.iface.addToolBar(u'GeometryValidator')
-        self.toolbar.setObjectName(u'GeometryValidator')
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -151,10 +148,10 @@ class GeometryValidator:
             action.setWhatsThis(whats_this)
 
         if add_to_toolbar:
-            self.toolbar.addAction(action)
+            self.iface.addToolBarIcon(action)
 
         if add_to_menu:
-            self.iface.addPluginToVectorMenu(
+            self.iface.addPluginToMenu(
                 self.menu,
                 action)
 
@@ -177,12 +174,10 @@ class GeometryValidator:
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
-            self.iface.removePluginVectorMenu(
+            self.iface.removePluginMenu(
                 self.tr(u'&Geometry Validator'),
                 action)
             self.iface.removeToolBarIcon(action)
-        # remove the toolbar
-        del self.toolbar
 
     def run(self):
         """Run method that performs all the real work"""
