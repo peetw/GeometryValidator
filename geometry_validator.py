@@ -171,6 +171,9 @@ class GeometryValidator:
             callback=self.run,
             parent=self.iface.mainWindow())
 
+        # Connect run button to process method
+        self.dlg.runButton.clicked.connect(self.process)
+
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
@@ -189,20 +192,21 @@ class GeometryValidator:
         # Filter input layer combo box to only show vector layers
         self.dlg.comboBoxInputLayer.setFilters(QgsMapLayerProxyModel.HasGeometry)
 
+        # Reset progress bar
+        self.dlg.progressBar.setValue(0)
+
         # Show the dialog
         self.dlg.show()
 
-        # Run the dialog event loop
-        result = self.dlg.exec_()
 
-        # See if OK was pressed
-        if result:
-            # Get selected layer and process if provided
-            layer = self.dlg.comboBoxInputLayer.currentLayer()
-            if layer:
-                self.process(layer)
+    def process(self):
+        # Get selected layer and process if provided
+        layer = self.dlg.comboBoxInputLayer.currentLayer()
+        if layer:
+            self.processLayer(layer)
 
-    def process(self, layer):
+
+    def processLayer(self, layer):
         # Initialize output vector layer for invalid point locations
         # NOTE: Must set CRS in vector layer path URI, rather than using setCrs() method;
         #       see: https://gis.stackexchange.com/a/77500
@@ -217,7 +221,9 @@ class GeometryValidator:
 
         # Iterate over each feature in the input layer
         numErrors = 0
-        for feature in layer.getFeatures():
+        total = 100.0 / layer.featureCount() if layer.featureCount() > 0 else 1
+        features = layer.getFeatures()
+        for current, feature in enumerate(features, 1):
             # Get geometry from current feature and check whether it is valid
             geom = feature.geometry()
             if not geom.isEmpty() and not geom.isGeosValid():
@@ -246,6 +252,9 @@ class GeometryValidator:
 
                 # Update error count
                 numErrors += 1
+
+            # Update current progress
+            self.dlg.progressBar.setValue(int(current * total))
 
         # Add output layer to map canvas if errors detected and display message box
         if numErrors > 0:
