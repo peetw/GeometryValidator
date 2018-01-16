@@ -10,7 +10,7 @@
 name=Geometry Validator
 qgisMinimumVersion=2.0
 description=Check whether geometries are OGC valid
-version=0.1
+version=1.0.0
 author=Jeremy Benn Associates Ltd.
 email=peet.whittaker@jbaconsulting.com
 
