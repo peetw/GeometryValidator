@@ -20,7 +20,7 @@
  *                                                                         *
  ***************************************************************************/
 """
-from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QVariant
+from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication, QVariant, QObject, pyqtSignal, QThread
 from PyQt4.QtGui import QAction, QIcon, QMessageBox
 # Initialize Qt resources from file resources.py
 import resources
@@ -32,6 +32,7 @@ from qgis.core import QgsMapLayerRegistry, QgsPoint, QgsGeometry, QgsFeature, Qg
 from qgis.gui import QgsMapLayerProxyModel
 from shapely import validation, wkt
 import re
+import traceback
 
 class GeometryValidator:
     """QGIS Plugin Implementation."""
@@ -203,64 +204,147 @@ class GeometryValidator:
         # Get selected layer and process if provided
         layer = self.dlg.comboBoxInputLayer.currentLayer()
         if layer:
-            self.processLayer(layer)
+            self.startWorker(layer)
 
 
-    def processLayer(self, layer):
-        # Initialize output vector layer for invalid point locations
-        # NOTE: Must set CRS in vector layer path URI, rather than using setCrs() method;
-        #       see: https://gis.stackexchange.com/a/77500
-        layerCrsWkt = layer.crs().toWkt()
-        errorLayerName = 'validation_errors'
-        errorLayer = QgsVectorLayer("Point?crs=%s" % layerCrsWkt, errorLayerName, 'memory')
+    def startWorker(self, layer):
+        # Initialize worker with selected layer
+        worker = Worker(layer)
 
-        # Add attribute fields to output layer
-        dataProvider = errorLayer.dataProvider()
-        dataProvider.addAttributes([QgsField('Reason', QVariant.String)])
-        errorLayer.updateFields()
+        # Disable run button
+        self.dlg.runButton.setEnabled(False)
 
-        # Iterate over each feature in the input layer
-        numErrors = 0
-        total = 100.0 / layer.featureCount() if layer.featureCount() > 0 else 1
-        features = layer.getFeatures()
-        for current, feature in enumerate(features, 1):
-            # Get geometry from current feature and check whether it is valid
-            geom = feature.geometry()
-            if not geom.isEmpty() and not geom.isGeosValid():
-                # Use shapely to get validation error reason
-                # NOTE: Cannot use the geom.validateGeometry() method here as it does not seem to work correctly
-                # NOTE: Shapely method uses the GEOSisValidReason_r method internally, see:
-                #       https://trac.osgeo.org/geos/browser/trunk/capi/geos_ts_c.cpp#L954
-                geomWkt = geom.exportToWkt()
-                shape = wkt.loads(geomWkt)
-                validationStr = validation.explain_validity(shape)
+        # Ensure worker is killed if dialog is "killed" (either by the user clicking Cancel, closing the dialog, or by pressing the Escape key)
+        self.dlg.rejected.connect(worker.kill)
 
-                # Parse validation error reason to get location co-ordinates
-                matches = re.search('\[([\w\d.\-+]+)\s+([\w\d.\-+]+)\]', validationStr)
-                coordX = matches.group(1)
-                coordY = matches.group(2)
+        # Initialize new thread and move worker to it
+        thread = QThread(self.dlg)
+        worker.moveToThread(thread)
 
-                # Convert co-ordinates to point geometry
-                errorPoint = QgsPoint(float(coordX), float(coordY))
-                errorGeom = QgsGeometry.fromPoint(errorPoint)
+        # Connect signals to slots
+        worker.finished.connect(self.workerFinished)
+        worker.error.connect(self.workerError)
+        worker.progress.connect(self.dlg.progressBar.setValue)
+        thread.started.connect(worker.run)
 
-                # Create new feature from point geometry and attribute with validation error reason
-                errorFeat = QgsFeature()
-                errorFeat.setGeometry(errorGeom)
-                errorFeat.setAttributes([validationStr])
-                dataProvider.addFeatures([errorFeat])
+        # Start thread and run worker
+        thread.start()
 
-                # Update error count
-                numErrors += 1
+        # Save reference to thread and worker
+        self.thread = thread
+        self.worker = worker
 
-            # Update current progress
-            self.dlg.progressBar.setValue(int(current * total))
 
-        # Add output layer to map canvas if errors detected and display message box
-        if numErrors > 0:
-            errorLayer.updateExtents()
-            QgsMapLayerRegistry.instance().addMapLayer(errorLayer)
-            errorMsg = "Detected %g invalid geometries!\n\nPlease see the '%s' layer for details." % (numErrors, errorLayerName)
-            QMessageBox.warning(self.dlg, 'Geometry Validator', errorMsg, QMessageBox.Ok)
-        else:
-            QMessageBox.information(self.dlg, 'Geometry Validator', "No invalid geometries detected :)", QMessageBox.Ok)
+    def workerFinished(self, ret):
+        # Clean up the worker and thread
+        self.worker.deleteLater()
+        self.thread.quit()
+        self.thread.wait()
+        self.thread.deleteLater()
+
+        # Process return value
+        if ret is not None:
+            numErrors, errorLayer, errorLayerName = ret
+
+            # Add output layer to map canvas if errors detected and display message box
+            if numErrors > 0:
+                errorLayer.updateExtents()
+                QgsMapLayerRegistry.instance().addMapLayer(errorLayer)
+                errorMsg = "Detected %g invalid geometries!\n\nPlease see the '%s' layer for details." % (numErrors, errorLayerName)
+                QMessageBox.warning(self.dlg, 'Geometry Validator', errorMsg, QMessageBox.Ok)
+            else:
+                QMessageBox.information(self.dlg, 'Geometry Validator', "No invalid geometries detected :)", QMessageBox.Ok)
+
+        # Re-enable run button
+        self.dlg.runButton.setEnabled(True)
+
+
+    def workerError(self, ex, exception_string):
+        # Display error message box
+        QMessageBox.critical(self.dlg, 'Geometry Validator', exception_string, QMessageBox.Ok)
+
+
+class Worker(QObject):
+    """Worker to run long-running process in separate thread; taken from:
+    https://snorfalorpagus.net/blog/2013/12/07/multithreading-in-qgis-python-plugins"""
+    def __init__(self, layer):
+        QObject.__init__(self)
+        self.layer = layer
+        self.killed = False
+
+    def run(self):
+        ret = None
+        try:
+            # Reset current progress
+            self.progress.emit(0)
+
+            # Initialize output vector layer for invalid point locations
+            # NOTE: Must set CRS in vector layer path URI, rather than using setCrs() method;
+            #       see: https://gis.stackexchange.com/a/77500
+            layerCrsWkt = self.layer.crs().toWkt()
+            errorLayerName = 'validation_errors'
+            errorLayer = QgsVectorLayer("Point?crs=%s" % layerCrsWkt, errorLayerName, 'memory')
+
+            # Add attribute fields to output layer
+            dataProvider = errorLayer.dataProvider()
+            dataProvider.addAttributes([QgsField('Reason', QVariant.String)])
+            errorLayer.updateFields()
+
+            # Iterate over each feature in the input layer
+            numErrors = 0
+            total = 100.0 / self.layer.featureCount() if self.layer.featureCount() > 0 else 1
+            features = self.layer.getFeatures()
+            for current, feature in enumerate(features, 1):
+                # Check whether kill request received
+                if self.killed is True:
+                    break
+
+                # Get geometry from current feature and check whether it is valid
+                geom = feature.geometry()
+                if not geom.isEmpty() and not geom.isGeosValid():
+                    # Use shapely to get validation error reason
+                    # NOTE: Cannot use the geom.validateGeometry() method here as it does not seem to work correctly
+                    # NOTE: Shapely method uses the GEOSisValidReason_r method internally, see:
+                    #       https://trac.osgeo.org/geos/browser/trunk/capi/geos_ts_c.cpp#L954
+                    geomWkt = geom.exportToWkt()
+                    shape = wkt.loads(geomWkt)
+                    validationStr = validation.explain_validity(shape)
+
+                    # Parse validation error reason to get location co-ordinates
+                    matches = re.search('\[([\w\d.\-+]+)\s+([\w\d.\-+]+)\]', validationStr)
+                    coordX = matches.group(1)
+                    coordY = matches.group(2)
+
+                    # Convert co-ordinates to point geometry
+                    errorPoint = QgsPoint(float(coordX), float(coordY))
+                    errorGeom = QgsGeometry.fromPoint(errorPoint)
+
+                    # Create new feature from point geometry and attribute with validation error reason
+                    errorFeat = QgsFeature()
+                    errorFeat.setGeometry(errorGeom)
+                    errorFeat.setAttributes([validationStr])
+                    dataProvider.addFeatures([errorFeat])
+
+                    # Update error count
+                    numErrors += 1
+
+                # Update current progress
+                self.progress.emit(int(current * total))
+
+            # Set return value
+            if self.killed is False:
+                ret = numErrors, errorLayer, errorLayerName
+        except Exception, ex:
+            # Propagate exception upstream
+            self.error.emit(ex, traceback.format_exc())
+
+        # Propagate return value
+        self.finished.emit(ret)
+
+    def kill(self):
+        self.killed = True
+
+    # Define signals
+    finished = pyqtSignal(object)
+    error = pyqtSignal(Exception, basestring)
+    progress = pyqtSignal(int)
