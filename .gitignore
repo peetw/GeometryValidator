@@ -215,3 +215,6 @@ CMakeLists.txt.user*
 
 # Auto-generated files
 resources.py
+
+# PyCharm files
+.idea/*
