@@ -218,3 +218,6 @@ resources.py
 
 # PyCharm files
 .idea/*
+
+# Packaged plugin
+*.zip
